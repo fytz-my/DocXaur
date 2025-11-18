@@ -14,7 +14,12 @@
 // import JSZip from "https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm";
 
 // Import zip-js from JSR
-import { BlobWriter, TextReader, ZipWriter } from "jsr:@zip-js/zip-js";
+import {
+  BlobReader,
+  BlobWriter,
+  TextReader,
+  ZipWriter,
+} from "jsr:@zip-js/zip-js";
 
 // ============================================================================
 // ENVIRONMENT CHECK
@@ -90,7 +95,7 @@ export interface ParagraphOptions extends TextStyle {
 export interface ImageOptions {
   width?: string;
   height?: string;
-  align?: "left" | "center" | "right";
+  align?: "left" | "center" | "right" | "justify";
 }
 
 export interface TableColumn {
@@ -109,7 +114,7 @@ export interface TableColumn {
 export interface TableOptions {
   columns: TableColumn[];
   width?: string;
-  align?: "left" | "center" | "right";
+  align?: "left" | "center" | "right" | "justify";
   borders?: boolean;
   indent?: string;
 }
@@ -428,7 +433,10 @@ export class DocXaur {
     // Images
     for (const [path, imgData] of this.images) {
       const filename = `word/media/image${imgData.id}.${imgData.extension}`;
-      await zipWriter.add(filename, base64ToUint8Array(imgData.data));
+      await zipWriter.add(
+        filename,
+        new BlobReader(new Blob([base64ToUint8Array(imgData.data)])),
+      );
     }
 
     await zipWriter.close();
