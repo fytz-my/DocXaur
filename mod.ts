@@ -19,7 +19,7 @@ import {
   BlobWriter,
   TextReader,
   ZipWriter,
-} from "jsr:@zip-js/zip-js";
+} from "jsr:@zip-js/zip-js@2.8.8";
 
 // ============================================================================
 // ENVIRONMENT CHECK
