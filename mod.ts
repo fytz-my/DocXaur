@@ -8,18 +8,10 @@
  * 1. Fresh Islands Only (browser APIs required)
  * 2. Semantic API (intuitive, minimal nesting)
  * 3. Consistent (similar patterns across all features)
+ * 4. Lazy Evaluation (operations deferred until XML generation)
  */
 
-// Import from CDN that works in browser
-// import JSZip from "https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm";
-
-// Import zip-js from JSR
-import {
-  BlobReader,
-  BlobWriter,
-  TextReader,
-  ZipWriter,
-} from "jsr:@zip-js/zip-js@2.8.8";
+import { BlobReader, BlobWriter, TextReader, ZipWriter } from "@zip-js/zip-js";
 
 // ============================================================================
 // ENVIRONMENT CHECK
@@ -281,100 +273,6 @@ async function fetchImageAsBase64(
 // CORE CLASSES
 // ============================================================================
 
-// export class DocXaur {
-//   private sections: Section[] = [];
-//   private options: DocumentOptions;
-//   private images: Map<string, { data: string; extension: string; id: number }> =
-//     new Map();
-//   private imageCounter = 1;
-//   private fontName: string;
-//   private fontSize: number;
-
-//   constructor(options: DocumentOptions = {}) {
-//     checkBrowserEnvironment();
-
-//     this.fontName = options.fontName || "Calibri";
-//     this.fontSize = options.fontSize || 11;
-
-//     this.options = {
-//       title: options.title || "Document",
-//       creator: options.creator || "DocXaur",
-//       description: options.description || "",
-//       subject: options.subject || "",
-//       keywords: options.keywords || "",
-//       fontName: this.fontName,
-//       fontSize: this.fontSize,
-//     };
-//   }
-
-//   getDefaultFont(): string {
-//     return this.fontName;
-//   }
-
-//   getDefaultSize(): number {
-//     return this.fontSize;
-//   }
-
-//   addSection(options?: SectionOptions): Section {
-//     const section = new Section(options, this);
-//     this.sections.push(section);
-//     return section;
-//   }
-
-//   async registerImage(url: string): Promise<number> {
-//     if (this.images.has(url)) {
-//       return this.images.get(url)!.id;
-//     }
-
-//     const imageData = await fetchImageAsBase64(url);
-//     const id = this.imageCounter++;
-//     this.images.set(url, { ...imageData, id });
-//     return id;
-//   }
-
-//   async toBlob(): Promise<Blob> {
-//     checkBrowserEnvironment();
-
-//     const zip = new JSZip();
-
-//     zip.file("[Content_Types].xml", this.generateContentTypes());
-
-//     const rels = zip.folder("_rels");
-//     rels?.file(".rels", this.generateRootRels());
-
-//     const docRels = zip.folder("word/_rels");
-//     docRels?.file("document.xml.rels", this.generateDocRels());
-
-//     const word = zip.folder("word");
-//     word?.file("document.xml", this.generateDocument());
-//     word?.file("styles.xml", this.generateStyles());
-//     word?.file("fontTable.xml", this.generateFontTable());
-//     word?.file("settings.xml", this.generateSettings());
-
-//     const media = word?.folder("media");
-//     for (const [path, imgData] of this.images) {
-//       const filename = `image${imgData.id}.${imgData.extension}`;
-//       media?.file(filename, imgData.data, { base64: true });
-//     }
-
-//     const blob = await zip.generateAsync({ type: "blob" });
-//     return blob;
-//   }
-
-//   async download(filename: string = "document.docx"): Promise<void> {
-//     checkBrowserEnvironment();
-
-//     const blob = await this.toBlob();
-//     const url = URL.createObjectURL(blob);
-//     const link = document.createElement("a");
-//     link.href = url;
-//     link.download = filename;
-//     document.body.appendChild(link);
-//     link.click();
-//     document.body.removeChild(link);
-//     URL.revokeObjectURL(url);
-//   }
-
 export class DocXaur {
   private sections: Section[] = [];
   private options: DocumentOptions;
@@ -415,12 +313,10 @@ export class DocXaur {
     return id;
   }
 
-  // ✅ NEW: Create DOCX ZIP using zip-js
   private async createDocxZip(): Promise<Blob> {
     const blobWriter = new BlobWriter();
     const zipWriter = new ZipWriter(blobWriter);
 
-    // Core files
     await zipWriter.add(
       "[Content_Types].xml",
       new TextReader(this.generateContentTypes()),
@@ -447,7 +343,6 @@ export class DocXaur {
       new TextReader(this.generateSettings()),
     );
 
-    // Images
     for (const [path, imgData] of this.images) {
       const filename = `word/media/image${imgData.id}.${imgData.extension}`;
       await zipWriter.add(
@@ -617,7 +512,7 @@ export class Section {
   constructor(options: SectionOptions = {}, doc: DocXaur) {
     this.options = {
       pageSize: options.pageSize ||
-        { width: "21cm", height: "29.7cm", orientation: "portrait" }, // A4 Portrait
+        { width: "21cm", height: "29.7cm", orientation: "portrait" },
       margins: options.margins ||
         { top: "2.54cm", right: "2.54cm", bottom: "2.54cm", left: "2.54cm" },
     };
@@ -659,25 +554,14 @@ export class Section {
     return table;
   }
 
-  // lineBreak(count: number = 1): this {
-  //   for (let i = 0; i < count; i++) {
-  //     this.elements.push(new LineBreak());
-  //   }
-  //   return this;
-  // }
-
-  // pageBreak(count: number = 1): this {
-  //   for (let i = 0; i < count; i++) {
-  //     this.elements.push(new PageBreak());
-  //   }
-  //   return this;
-  // }
-
   async toXMLAsync(): Promise<string> {
-    // ✅ Initialize all table images first
+    // Build and initialize all tables first
     for (const element of this.elements) {
       if (element instanceof Table) {
         await element.initImages();
+      }
+      if (element instanceof Paragraph) {
+        element.build();
       }
     }
     return this.elements.map((el) => el.toXML()).join("\n");
@@ -718,9 +602,13 @@ interface TextRun {
   style?: TextStyle;
 }
 
+type ParagraphOperation = () => void;
+
 export class Paragraph extends Element {
   private runs: TextRun[] = [];
   private options: ParagraphOptions;
+  private operations: ParagraphOperation[] = [];
+  private isBuilt = false;
 
   constructor(options: ParagraphOptions = {}) {
     super();
@@ -728,37 +616,63 @@ export class Paragraph extends Element {
   }
 
   text(text: string, style?: TextStyle): this {
-    this.runs.push({ text, style });
+    this.operations.push(() => {
+      this.runs.push({ text, style });
+    });
     return this;
   }
 
   tab(): this {
-    this.runs.push({ text: "\t" });
+    this.operations.push(() => {
+      this.runs.push({ text: "\t" });
+    });
     return this;
   }
 
   lineBreak(count: number = 1): this {
-    for (let i = 0; i < count; i++) {
-      this.runs.push({ text: "\n" });
-    }
+    this.operations.push(() => {
+      for (let i = 0; i < count; i++) {
+        this.runs.push({ text: "\n" });
+      }
+    });
     return this;
   }
 
   pageBreak(count: number = 1): this {
-    for (let i = 0; i < count; i++) {
-      this.runs.push({ text: "[PAGE_BREAK]" });
-    }
+    this.operations.push(() => {
+      for (let i = 0; i < count; i++) {
+        this.runs.push({ text: "[PAGE_BREAK]" });
+      }
+    });
     return this;
   }
 
+  /**
+   * @deprecated This method is no longer needed. Direct method calls now work.
+   * This method will be removed in a future version.
+   */
   apply(...operations: ((builder: this) => this)[]): this {
+    console.warn(
+      "Paragraph.apply() is deprecated. Use direct method calls instead.",
+    );
     for (const operation of operations) {
       operation(this);
     }
     return this;
   }
 
+  build(): void {
+    if (this.isBuilt) return;
+    this.isBuilt = true;
+
+    for (const operation of this.operations) {
+      operation();
+    }
+  }
+
   toXML(): string {
+    this.build();
+
     const align = this.options.align || "left";
     const breaksBefore = this.options.breakBefore || 0;
     const breaksAfter = this.options.breakAfter || 0;
@@ -839,28 +753,6 @@ export class Paragraph extends Element {
   }
 }
 
-// export class LineBreak extends Element {
-//   toXML(): string {
-//     return `    <w:p>
-//       <w:r>
-//         <w:br/>
-//       </w:r>
-//     </w:p>
-// `;
-//   }
-// }
-
-// export class PageBreak extends Element {
-//   toXML(): string {
-//     return `    <w:p>
-//       <w:r>
-//         <w:br w:type="page"/>
-//       </w:r>
-//     </w:p>
-// `;
-//   }
-// }
-
 export class Image extends Element {
   private static imageCounter = 1;
 
@@ -940,9 +832,11 @@ export class Image extends Element {
 }
 
 export class Table extends Element {
+  private rowDefinitions: Array<(string | TableCellData)[]> = [];
   private rows: TableRow[] = [];
   private options: TableOptions;
   private doc?: DocXaur;
+  private isBuilt = false;
 
   constructor(options: TableOptions) {
     super();
@@ -956,59 +850,82 @@ export class Table extends Element {
     this.doc = doc;
   }
 
-  async initImages(): Promise<void> {
-    if (!this.doc) throw new Error("Table not attached to document");
-    await Promise.all(this.rows.map((row) => row.initCells(this.doc!)));
-  }
-
   row(...cells: (string | TableCellData)[]): this {
-    const row = new TableRow(this.options);
-
-    cells.forEach((cell, index) => {
-      const colOptions = this.options.columns[index];
-
-      if (typeof cell === "string") {
-        row.cell({
-          text: cell,
-          hAlign: colOptions?.hAlign || "center",
-          vAlign: colOptions?.vAlign || "center",
-          fontName: colOptions?.fontName,
-          fontSize: colOptions?.fontSize,
-          fontColor: colOptions?.fontColor,
-          cellColor: colOptions?.cellColor,
-          bold: colOptions?.bold,
-          italic: colOptions?.italic,
-          underline: colOptions?.underline,
-          marginTop: colOptions?.marginTop,
-          marginRight: colOptions?.marginRight,
-          marginBottom: colOptions?.marginBottom,
-          marginLeft: colOptions?.marginLeft,
-        });
-      } else {
-        row.cell({
-          hAlign: colOptions?.hAlign || "center",
-          vAlign: colOptions?.vAlign || "center",
-          fontName: colOptions?.fontName,
-          fontSize: colOptions?.fontSize,
-          fontColor: colOptions?.fontColor,
-          cellColor: colOptions?.cellColor,
-          bold: colOptions?.bold,
-          italic: colOptions?.italic,
-          underline: colOptions?.underline,
-          marginTop: colOptions?.marginTop,
-          marginRight: colOptions?.marginRight,
-          marginBottom: colOptions?.marginBottom,
-          marginLeft: colOptions?.marginLeft,
-          ...cell, // Cell properties override column defaults
-        });
-      }
-    });
-
-    this.rows.push(row);
+    // Store row definition without building yet
+    this.rowDefinitions.push(cells);
     return this;
   }
 
+  private async buildRows(): Promise<void> {
+    if (this.isBuilt) return;
+    this.isBuilt = true;
+
+    // Build all rows from definitions
+    for (const cellDefs of this.rowDefinitions) {
+      const row = new TableRow(this.options);
+
+      cellDefs.forEach((cell, index) => {
+        const colOptions = this.options.columns[index];
+
+        if (typeof cell === "string") {
+          row.cell({
+            text: cell,
+            hAlign: colOptions?.hAlign || "center",
+            vAlign: colOptions?.vAlign || "center",
+            fontName: colOptions?.fontName,
+            fontSize: colOptions?.fontSize,
+            fontColor: colOptions?.fontColor,
+            cellColor: colOptions?.cellColor,
+            bold: colOptions?.bold,
+            italic: colOptions?.italic,
+            underline: colOptions?.underline,
+            marginTop: colOptions?.marginTop,
+            marginRight: colOptions?.marginRight,
+            marginBottom: colOptions?.marginBottom,
+            marginLeft: colOptions?.marginLeft,
+          });
+        } else {
+          row.cell({
+            hAlign: colOptions?.hAlign || "center",
+            vAlign: colOptions?.vAlign || "center",
+            fontName: colOptions?.fontName,
+            fontSize: colOptions?.fontSize,
+            fontColor: colOptions?.fontColor,
+            cellColor: colOptions?.cellColor,
+            bold: colOptions?.bold,
+            italic: colOptions?.italic,
+            underline: colOptions?.underline,
+            marginTop: colOptions?.marginTop,
+            marginRight: colOptions?.marginRight,
+            marginBottom: colOptions?.marginBottom,
+            marginLeft: colOptions?.marginLeft,
+            ...cell,
+          });
+        }
+      });
+
+      this.rows.push(row);
+    }
+
+    // Initialize all images after rows are built
+    if (this.doc) {
+      await Promise.all(this.rows.map((row) => row.initCells(this.doc!)));
+    }
+  }
+
+  async initImages(): Promise<void> {
+    if (!this.doc) throw new Error("Table not attached to document");
+    await this.buildRows();
+  }
+
+  /**
+   * @deprecated This method is no longer needed. Use direct .row() calls instead.
+   * This method will be removed in a future version.
+   */
   apply(...operations: ((builder: this) => this)[]): this {
+    console.warn(
+      "Table.apply() is deprecated. Use direct .row() calls instead.",
+    );
     for (const op of operations) {
       op(this);
     }
@@ -1017,6 +934,11 @@ export class Table extends Element {
 
   toXML(): string {
     if (!this.doc) throw new Error("Table not attached to document");
+    if (!this.isBuilt) {
+      throw new Error(
+        "Table rows not built. Call initImages() first via Section.toXMLAsync().",
+      );
+    }
 
     const align = this.options.align || "center";
 
@@ -1094,7 +1016,7 @@ class TableRow {
     xml += "        </w:trPr>\n";
 
     for (let i = 0; i < this.cells.length; i++) {
-      xml += this.cells[i].toXML(i, this.tableOptions, doc); // ✅ Pass doc
+      xml += this.cells[i].toXML(i, this.tableOptions, doc);
     }
 
     xml += "      </w:tr>\n";
@@ -1116,7 +1038,7 @@ class TableCell {
     if (this.data.height) {
       return parseNumberTwips(this.data.height);
     }
-    return 170; // default ~0.3cm
+    return 170;
   }
 
   toXML(colIndex: number, tableOptions: TableOptions, doc: DocXaur): string {
@@ -1191,7 +1113,6 @@ class TableCell {
 
     xml += "          </w:tcPr>\n";
 
-    // ✅ ADD: Check if image or text
     if (this.data.image && this.imageId !== undefined) {
       xml += this.renderImageInCell(doc);
     } else {
