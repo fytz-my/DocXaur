@@ -1,45 +1,29 @@
-/**
- * Image builder and `section.image()` augmentation.
- * @module
- */
 
-import { cmToEmu, parseImageSize } from "../core/utils.ts";
-import type { ImageOptions } from "../core/docxaur.ts";
-import { Element, Section } from "./section.ts";
+    /**
+     * Image block.
+     * @module
+     */
+    import { cmToEmu, parseImageSize } from "../core/utils.ts";
+    import type { ImageOptions } from "../core/docxaur.ts";
+    import { Section, Element } from "./section.ts";
 
-/** Image element (inline DrawingML). */
-export class Image extends Element {
-  private static drawingCounter = 1;
-  static nextId(): number {
-    return Image.drawingCounter++;
-  }
+    export class Image extends Element {
+      private static drawingCounter = 1; static nextId(): number { return Image.drawingCounter++; }
+      constructor(private imageId: number, private section: Section, private options: ImageOptions = {}) { super(); }
 
-  constructor(
-    private imageId: number,
-    private section: Section,
-    private options: ImageOptions = {},
-  ) {
-    super();
-  }
-
-  toXML(): string {
-    const width = this.options.width
-      ? parseImageSize(this.options.width)
-      : cmToEmu(10);
-    const height = this.options.height
-      ? parseImageSize(this.options.height)
-      : width;
-    const align = this.options.align ?? "center";
-    const relId = this.section._doc().getImageRelId(this.imageId);
-    const drawId = Image.nextId();
-
-    let xml = "  <w:p>\n";
-    if (align !== "left") {
-      xml += "    <w:pPr>\n";
-      xml += `      <w:jc w:val="${align}"/>\n`;
-      xml += "    </w:pPr>\n";
-    }
-    xml += `    <w:r>
+      toXML(): string {
+        const width  = this.options.width  ? parseImageSize(this.options.width)  : cmToEmu(10);
+        const height = this.options.height ? parseImageSize(this.options.height) : width;
+        const align  = this.options.align ?? "center";
+        const relId  = this.section._doc().getImageRelId(this.imageId);
+        const drawId = Image.nextId();
+        let xml = "  <w:p>
+";
+        if (align !== "left") { xml += "    <w:pPr>
+"; xml += `      <w:jc w:val="${align}"/>
+`; xml += "    </w:pPr>
+"; }
+        xml += `    <w:r>
       <w:drawing>
         <wp:inline distT="0" distB="0" distL="0" distR="0">
           <wp:extent cx="${width}" cy="${height}"/>
@@ -69,23 +53,6 @@ export class Image extends Element {
         </wp:inline>
       </w:drawing>
     </w:r>
-  </w:p>`;
-    return xml;
-  }
-}
-
-/** Module augmentation: add `image()` to Section. */
-declare module "./section.ts" {
-  interface Section {
-    image(url: string, options?: ImageOptions): Promise<Section>;
-  }
-}
-(Section.prototype as any).image = async function image(
-  this: Section,
-  url: string,
-  options?: ImageOptions,
-): Promise<Section> {
-  const id = await this._doc().registerImage(url);
-  this._push(new Image(id, this, options));
-  return this;
-};
+  </w:p>`; return xml;
+      }
+    }
