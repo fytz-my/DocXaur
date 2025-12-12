@@ -323,9 +323,11 @@ export class DocXaur {
     if (this.images.has(url)) {
       return this.images.get(url)!.id;
     }
+    console.log(`📸 Registering new image: ${url}`);
     const imageData = await fetchImageAsBase64(url);
     const id = this.imageCounter++;
     this.images.set(url, { ...imageData, id });
+    console.log(`✅ Registered image #${id} (total: ${this.images.size})`);
     return id;
   }
 
@@ -359,8 +361,11 @@ export class DocXaur {
       new TextReader(this.generateSettings()),
     );
 
-    for (const [path, imgData] of this.images) {
+    // ✅ Add images to ZIP with logging
+    console.log("📦 Adding images to DOCX:");
+    for (const [url, imgData] of this.images) {
       const filename = `word/media/image${imgData.id}.${imgData.extension}`;
+      console.log(`  Adding ${filename} (${imgData.data.length} base64 chars)`);
       await zipWriter.add(
         filename,
         new BlobReader(new Blob([base64ToUint8Array(imgData.data)])),
@@ -419,17 +424,25 @@ export class DocXaur {
 
   private generateDocRels(): string {
     let xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable" Target="fontTable.xml"/>
-  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>
-`;
+  <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+    <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable" Target="fontTable.xml"/>
+    <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>
+  `;
 
-    let relId = 4;
-    for (const [path, imgData] of this.images) {
+    // ✅ FIX: Sort images by ID to ensure consistent relationship ordering
+    const sortedImages = Array.from(this.images.entries()).sort((a, b) =>
+      a[1].id - b[1].id
+    );
+
+    console.log("📋 Generating document relationships:");
+    for (const [url, imgData] of sortedImages) {
+      const relId = imgData.id + 3; // rId4, rId5, rId6, etc.
+      console.log(
+        `  Image #${imgData.id} → rId${relId} → media/image${imgData.id}.${imgData.extension}`,
+      );
       xml +=
         `  <Relationship Id="rId${relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image${imgData.id}.${imgData.extension}"/>\n`;
-      relId++;
     }
 
     xml += `</Relationships>`;
@@ -437,7 +450,11 @@ export class DocXaur {
   }
 
   getImageRelId(imageId: number): string {
-    return `rId${imageId + 3}`;
+    // Relationship IDs start at rId4 (rId1-3 are reserved for styles, fontTable, settings)
+    // So image with id=1 should be rId4, id=2 should be rId5, etc.
+    const relId = `rId${imageId + 3}`;
+    console.log(`🔗 Image ID ${imageId} → Relationship ${relId}`);
+    return relId;
   }
 
   private async generateDocumentAsync(): Promise<string> {
