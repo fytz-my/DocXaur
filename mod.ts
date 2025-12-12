@@ -226,6 +226,40 @@ function escapeXML(str: string): string {
     .replace(/'/g, "&apos;");
 }
 
+// ---- Relationships helper (KISS/DRY) ----
+const RELS_PATH = "word/_rels/document.xml.rels";
+const REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
+const IMAGE_REL =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+
+function ensureImageRelationships(
+  relsXml: string | undefined,
+  images: Array<{ rid: string; target: string }>,
+): string {
+  const xmlHeader = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`;
+  const openTag = `<Relationships xmlns="${REL_NS}">`;
+  const closeTag = `</Relationships>`;
+  const base = (relsXml && relsXml.trim().length)
+    ? relsXml
+    : `${xmlHeader}${openTag}${closeTag}`;
+
+  const existingIds = new Set(
+    (base.match(/Id="(rId\d+)"/g) ?? []).map((s) =>
+      s.replace(/.*Id="(rId\d+)".*/, "$1")
+    ),
+  );
+  const additions = images
+    .filter((img) => !existingIds.has(img.rid))
+    .map((img) =>
+      `<Relationship Id="${img.rid}" Type="${IMAGE_REL}" Target="${img.target}"/>`
+    )
+    .join("");
+
+  return base.includes(closeTag)
+    ? base.replace(closeTag, additions + closeTag)
+    : `${xmlHeader}${openTag}${additions}${closeTag}`;
+}
+
 async function fetchImageAsBase64(
   url: string,
 ): Promise<{ data: string; extension: string }> {
@@ -340,10 +374,21 @@ export class DocXaur {
       new TextReader(this.generateContentTypes()),
     );
     await zipWriter.add("_rels/.rels", new TextReader(this.generateRootRels()));
+
+    // 🔁 THIS BLOCK IS THE REPLACEMENT
+    const rawDocRels = this.generateDocRels();
+    const imageRels = Array.from(this.images.entries()).map(([url, d]) => ({
+      rid: `rId${d.id + 3}`, // rId4.. for images
+      target: `media/image${d.id}.${d.extension}`, // matches what we add under word/media
+    }));
+    const fixedDocRels = ensureImageRelationships(rawDocRels, imageRels);
+
     await zipWriter.add(
       "word/_rels/document.xml.rels",
-      new TextReader(this.generateDocRels()),
+      new TextReader(fixedDocRels),
     );
+    // 🔁 END OF REPLACEMENT
+
     await zipWriter.add(
       "word/document.xml",
       new TextReader(await this.generateDocumentAsync()),
@@ -361,7 +406,6 @@ export class DocXaur {
       new TextReader(this.generateSettings()),
     );
 
-    // ✅ Add images to ZIP with logging
     console.log("📦 Adding images to DOCX:");
     for (const [url, imgData] of this.images) {
       const filename = `word/media/image${imgData.id}.${imgData.extension}`;
