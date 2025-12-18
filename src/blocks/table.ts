@@ -1,11 +1,21 @@
 /**
- * Table block.
+ * Table block implementation with rich text formatting, percentage-based widths,
+ * and cell-level styling.
  *
  * Construct tables by defining columns in `TableOptions` and adding rows via
  * `.row(...)`. Use `section.table(options)` to obtain a `Table` tied to a
  * section — Table requires a Section context to resolve images and sizing.
+ *
+ * @module
  */
-import { cmToEmu, parseImageSize, parseNumberTwips } from "../core/utils.ts";
+
+import {
+  cmToEmu,
+  escapeXML,
+  parseImageSize,
+  parseNumberTwips,
+  ptToHalfPoints,
+} from "../core/utils.ts";
 import type {
   TableCellData,
   TableColumn,
@@ -15,20 +25,202 @@ import { Element } from "./element.ts";
 import type { Section } from "./section.ts";
 import { Image } from "./image.ts";
 
+/**
+ * Style properties for a text run within a cell.
+ *
+ * @typedef {Object} TextRunStyle
+ * @property {string} text - Run text content
+ * @property {boolean} [bold] - Bold formatting
+ * @property {boolean} [italic] - Italic formatting
+ * @property {boolean} [underline] - Underline formatting
+ * @property {number} [fontSize] - Font size in points
+ * @property {string} [fontColor] - Font color (hex without #)
+ * @property {string} [fontName] - Font family name
+ */
+interface TextRunStyle {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  fontSize?: number;
+  fontColor?: string;
+  fontName?: string;
+}
+
+/**
+ * Table cell data with support for rich text runs and breaks.
+ *
+ * Extends base TableCellData to provide multiple formatted text segments,
+ * line and page break support, and per-cell font formatting that overrides
+ * column defaults.
+ *
+ * @typedef {Object} EnhancedTableCellData
+ * @property {string} [text] - Single text run (used if runs not provided)
+ * @property {TextRunStyle[]} [runs] - Array of formatted text segments
+ * @property {string} [fontName] - Font family (overrides column default)
+ * @property {number} [fontSize] - Font size in points (overrides column default)
+ * @property {string} [fontColor] - Font color hex (overrides column default)
+ * @property {boolean} [bold] - Bold formatting (overrides column default)
+ * @property {boolean} [italic] - Italic formatting (overrides column default)
+ * @property {boolean} [underline] - Underline formatting (overrides column default)
+ * @property {string} [hAlign] - Horizontal alignment (overrides column default)
+ * @property {string} [vAlign] - Vertical alignment (overrides column default)
+ * @property {string} [cellColor] - Cell background color hex
+ * @property {number} [colspan] - Column span count
+ * @property {number} [rowspan] - Row span count (0 for continuation)
+ * @property {string} [height] - Cell height
+ * @property {string} [marginTop] - Top margin
+ * @property {string} [marginRight] - Right margin
+ * @property {string} [marginBottom] - Bottom margin
+ * @property {string} [marginLeft] - Left margin
+ */
+export interface EnhancedTableCellData extends TableCellData {
+  runs?: TextRunStyle[];
+}
+
+/**
+ * Parses width specification to OOXML table cell width value.
+ *
+ * Handles both percentage-based widths (e.g., "28.7%") and fixed widths
+ * (e.g., "5cm", "100pt"). Percentage widths use type="pct" with value * 50
+ * per OOXML specification.
+ *
+ * @private
+ * @param {string} width - Width specification
+ * @returns {Object} Parsed width with value and type
+ * @returns {number} return.value - Width value for OOXML
+ * @returns {string} return.type - OOXML width type ("pct" or "dxa")
+ */
+function parseTableCellWidth(width: string): { value: number; type: string } {
+  const isPercentage = width.endsWith("%");
+
+  if (isPercentage) {
+    const percentValue = parseInt(width, 10);
+    return { value: percentValue * 50, type: "pct" };
+  }
+
+  return { value: parseNumberTwips(width), type: "dxa" };
+}
+
+/**
+ * Represents a formatted text run within a table cell.
+ *
+ * Generates OOXML `<w:r>` element with optional run properties including
+ * font styling, color, and typeface. Supports line breaks and page breaks.
+ */
+class TableCellRun {
+  /**
+   * Creates a new text run.
+   *
+   * @param {string} text - Run text content or special marker
+   * @param {Object} [style] - Run styling
+   * @param {boolean} [style.bold] - Bold formatting
+   * @param {boolean} [style.italic] - Italic formatting
+   * @param {boolean} [style.underline] - Underline formatting
+   * @param {number} [style.fontSize] - Font size in points
+   * @param {string} [style.fontColor] - Font color (hex without #)
+   * @param {string} [style.fontName] - Font family
+   */
+  constructor(
+    public text: string,
+    public style?: {
+      bold?: boolean;
+      italic?: boolean;
+      underline?: boolean;
+      fontSize?: number;
+      fontColor?: string;
+      fontName?: string;
+    },
+  ) {}
+
+  /**
+   * Generates OOXML for this text run.
+   *
+   * Produces a `<w:r>` element with embedded `<w:rPr>` properties if styling
+   * is specified, followed by the text content in `<w:t>`. Handles special
+   * markers for line breaks and page breaks.
+   *
+   * @returns {string} WordprocessingML run element
+   */
+  toXML(): string {
+    let xml = "        <w:r>\n";
+
+    if (this.style && Object.values(this.style).some((v) => v !== undefined)) {
+      xml += "          <w:rPr>\n";
+      if (this.style.bold) xml += "            <w:b/>\n";
+      if (this.style.italic) xml += "            <w:i/>\n";
+      if (this.style.underline) xml += '            <w:u w:val="single"/>\n';
+      if (this.style.fontSize) {
+        xml += `            <w:sz w:val="${
+          ptToHalfPoints(this.style.fontSize)
+        }"/>\n`;
+      }
+      if (this.style.fontColor) {
+        xml += `            <w:color w:val="${this.style.fontColor}"/>\n`;
+      }
+      if (this.style.fontName) {
+        xml +=
+          `            <w:rFonts w:ascii="${this.style.fontName}" w:hAnsi="${this.style.fontName}"/>\n`;
+      }
+      xml += "          </w:rPr>\n";
+    }
+
+    xml += `          <w:t xml:space="preserve">${
+      escapeXML(this.text)
+    }</w:t>\n`;
+    xml += "        </w:r>\n";
+    return xml;
+  }
+}
+
+/**
+ * Represents a single table row containing cells.
+ *
+ * Manages row-level properties and cell initialization. Calculates row height
+ * based on cell contents.
+ */
 class TableRow {
   private cells: TableCell[] = [];
 
+  /**
+   * Creates a new table row.
+   *
+   * @param {TableOptions} tableOptions - Parent table options
+   */
   constructor(private tableOptions: TableOptions) {}
 
-  cell(data: TableCellData): this {
+  /**
+   * Adds a cell to this row.
+   *
+   * @param {EnhancedTableCellData} data - Cell content and styling
+   * @returns {this}
+   */
+  cell(data: EnhancedTableCellData): this {
     this.cells.push(new TableCell(data));
     return this;
   }
 
+  /**
+   * Initializes all cells.
+   *
+   * Performs async operations like image registration. Must be called
+   * before generating XML.
+   *
+   * @param {Section} section - Parent section context
+   * @returns {Promise<void>}
+   */
   async initCells(section: Section): Promise<void> {
     await Promise.all(this.cells.map((cell) => cell.init(section)));
   }
 
+  /**
+   * Generates OOXML for this table row.
+   *
+   * Produces a `<w:tr>` element with row properties and cell elements.
+   *
+   * @param {Section} section - Parent section context
+   * @returns {string} WordprocessingML table row element
+   */
   toXML(section: Section): string {
     let xml = "  <w:tr>\n";
     let maxHeight = 170;
@@ -48,22 +240,144 @@ class TableRow {
   }
 }
 
+/**
+ * Represents a single table cell.
+ *
+ * Handles text content with multiple runs, images, cell-level styling,
+ * merging properties, and margins. Supports percentage and fixed-width columns.
+ */
 class TableCell {
   private imageId?: number;
 
-  constructor(private data: TableCellData) {}
+  /**
+   * Creates a new table cell.
+   *
+   * @param {EnhancedTableCellData} data - Cell content and formatting
+   */
+  constructor(private data: EnhancedTableCellData) {}
 
+  /**
+   * Initializes the cell.
+   *
+   * Registers embedded images and prepares content for rendering.
+   *
+   * @param {Section} section - Parent section context
+   * @returns {Promise<void>}
+   */
   async init(section: Section): Promise<void> {
     if (this.data.image) {
       this.imageId = await section._doc().registerImage(this.data.image.url);
     }
   }
 
+  /**
+   * Gets cell height in twips.
+   *
+   * Returns explicit cell height or default minimum height.
+   *
+   * @returns {number} Height in twips
+   */
   getHeight(): number {
     if (this.data.height) return parseNumberTwips(this.data.height);
     return 170;
   }
 
+  /**
+   * Builds array of text runs from cell data.
+   *
+   * Processes custom runs with line breaks and page breaks. Respects
+   * `runs` property for multiple formatted segments or falls back to
+   * single text run with cell-level formatting.
+   *
+   * @private
+   * @returns {TableCellRun[]} Array of formatted text runs
+   */
+  private buildRuns(): TableCellRun[] {
+    const runs: TableCellRun[] = [];
+
+    if (this.data.runs && this.data.runs.length > 0) {
+      for (const run of this.data.runs) {
+        if (run.text === "\n") {
+          runs.push(new TableCellRun("\n"));
+        } else if (run.text === "[PAGE_BREAK]") {
+          runs.push(new TableCellRun("[PAGE_BREAK]"));
+        } else {
+          runs.push(
+            new TableCellRun(run.text, {
+              bold: run.bold,
+              italic: run.italic,
+              underline: run.underline,
+              fontSize: run.fontSize,
+              fontColor: run.fontColor,
+              fontName: run.fontName,
+            }),
+          );
+        }
+      }
+    } else if (this.data.text) {
+      runs.push(
+        new TableCellRun(this.data.text, {
+          bold: this.data.bold,
+          italic: this.data.italic,
+          underline: this.data.underline,
+          fontSize: this.data.fontSize,
+          fontColor: this.data.fontColor,
+          fontName: this.data.fontName,
+        }),
+      );
+    }
+
+    return runs;
+  }
+
+  /**
+   * Generates OOXML paragraph for cell text content.
+   *
+   * Produces a `<w:p>` element containing text runs with alignment
+   * and formatting properties. Handles line breaks and page breaks.
+   *
+   * @private
+   * @returns {string} WordprocessingML paragraph element
+   */
+  private buildParagraphXML(): string {
+    const jc = this.data.hAlign === "justify"
+      ? "both"
+      : this.data.hAlign ?? "center";
+
+    let xml = "      <w:p>\n";
+    xml += "        <w:pPr>\n";
+    xml += `          <w:jc w:val="${jc}"/>\n`;
+    xml += "        </w:pPr>\n";
+
+    const runs = this.buildRuns();
+    for (const run of runs) {
+      if (run.text === "\n") {
+        xml += "        <w:r><w:br/></w:r>\n";
+      } else if (run.text === "[PAGE_BREAK]") {
+        xml += '        <w:r><w:br w:type="page"/></w:r>\n';
+      } else {
+        xml += run.toXML();
+      }
+    }
+
+    xml += "      </w:p>\n";
+    return xml;
+  }
+
+  /**
+   * Generates OOXML for this table cell.
+   *
+   * Produces a `<w:tc>` element with cell properties (width, alignment, merging),
+   * background color, margins, and content (text or image).
+   *
+   * Supports percentage-based widths and fixed widths. Cell font properties
+   * override column defaults.
+   *
+   * @param {number} colIndex - Column index for width lookup
+   * @param {TableOptions} tableOptions - Parent table options
+   * @param {Section} section - Parent section context
+   * @returns {string} WordprocessingML table cell element
+   */
   toXML(
     colIndex: number,
     tableOptions: TableOptions,
@@ -73,8 +387,13 @@ class TableCell {
     const align = this.data.hAlign ?? "center";
     let xml = "    <w:tc>\n";
     xml += "      <w:tcPr>\n";
-    const colWidth = parseNumberTwips(tableOptions.columns[colIndex].width);
-    xml += `        <w:tcW w:w="${colWidth}" w:type="dxa"/>\n`;
+
+    const colWidth = tableOptions.columns[colIndex].width;
+    const widthSpec = parseTableCellWidth(colWidth);
+
+    xml +=
+      `        <w:tcW w:w="${widthSpec.value}" w:type="${widthSpec.type}"/>\n`;
+
     xml += `        <w:vAlign w:val="${vAlign}"/>\n`;
     if (this.data.colspan && this.data.colspan > 1) {
       xml += `        <w:gridSpan w:val="${this.data.colspan}"/>\n`;
@@ -88,6 +407,7 @@ class TableCell {
       xml +=
         `        <w:shd w:val="clear" w:color="auto" w:fill="${this.data.cellColor}"/>\n`;
     }
+
     const col = tableOptions.columns[colIndex];
     const mt = this.data.marginTop ?? col?.marginTop ?? tableOptions.marginTop;
     const mr = this.data.marginRight ?? col?.marginRight ??
@@ -96,6 +416,7 @@ class TableCell {
       tableOptions.marginBottom;
     const ml = this.data.marginLeft ?? col?.marginLeft ??
       tableOptions.marginLeft;
+
     if (
       mt !== undefined || mr !== undefined || mb !== undefined ||
       ml !== undefined
@@ -171,15 +492,7 @@ class TableCell {
        </w:p>
  `;
     } else {
-      const jc = align === "justify" ? "both" : align;
-      xml += "      <w:p>\n";
-      xml += "        <w:pPr>\n";
-      xml += `          <w:jc w:val="${jc}"/>\n`;
-      xml += "        </w:pPr>\n";
-      xml += `        <w:r><w:t xml:space="preserve">${
-        this.data.text ?? ""
-      }</w:t></w:r>\n`;
-      xml += "      </w:p>\n";
+      xml += this.buildParagraphXML();
     }
     xml += "    </w:tc>\n";
     return xml;
@@ -192,13 +505,31 @@ class TableCell {
  * Construct tables by defining columns in `TableOptions` and adding rows via
  * `.row(...)`. Use `section.table(options)` to obtain a `Table` tied to a
  * section — Table requires a Section context to resolve images and sizing.
+ *
+ * Supports percentage-based column widths, multiple text runs per cell with
+ * independent formatting, line breaks, page breaks, and cell-level style
+ * properties that override column defaults.
  */
 export class Table extends Element {
-  private rowDefs: Array<(string | TableCellData)[]> = [];
+  private rowDefs: Array<(string | EnhancedTableCellData)[]> = [];
   private rows: TableRow[] = [];
   private options: TableOptions;
   private isBuilt = false;
 
+  /**
+   * Creates a new table.
+   *
+   * @param {TableOptions} options - Table configuration
+   * @param {TableColumn[]} options.columns - Column definitions with width
+   * @param {string} [options.width] - Table width (percentage or fixed)
+   * @param {string} [options.align] - Table alignment (left, center, right, justify)
+   * @param {boolean} [options.borders] - Show table borders (default: true)
+   * @param {string} [options.indent] - Table indentation
+   * @param {string} [options.marginTop] - Top margin for all cells
+   * @param {string} [options.marginRight] - Right margin for all cells
+   * @param {string} [options.marginBottom] - Bottom margin for all cells
+   * @param {string} [options.marginLeft] - Left margin for all cells
+   */
   constructor(options: TableOptions) {
     super();
     this.options = options;
@@ -207,12 +538,27 @@ export class Table extends Element {
     }
   }
 
-  row(...cells: (string | TableCellData)[]): this {
+  /**
+   * Adds a row to the table.
+   *
+   * Rows can contain simple string cells or `EnhancedTableCellData` objects
+   * with rich formatting, multiple runs, and line/page breaks.
+   *
+   * @param {...(string | EnhancedTableCellData)[]} cells - Row cells
+   * @returns {this}
+   */
+  row(...cells: (string | EnhancedTableCellData)[]): this {
     this.rowDefs.push(cells);
     return this;
   }
 
-  /** @deprecated Use direct `.row()` calls. */
+  /**
+   * Applies conditional operations to the table.
+   *
+   * @deprecated Use direct `.row()` calls instead.
+   * @param {...Function[]} ops - Operations to apply
+   * @returns {this}
+   */
   apply(...ops: ((builder: this) => this)[]): this {
     console.warn(
       "Table.apply() is deprecated. Use direct .row() calls instead.",
@@ -223,6 +569,15 @@ export class Table extends Element {
     return this;
   }
 
+  /**
+   * Builds all rows.
+   *
+   * Initializes cells, registers images, and prepares content for rendering.
+   * Called internally before generating OOXML.
+   *
+   * @param {Section} section - Parent section context
+   * @returns {Promise<void>}
+   */
   async buildRows(section: Section): Promise<void> {
     if (this.isBuilt) return;
     this.isBuilt = true;
@@ -249,19 +604,19 @@ export class Table extends Element {
           });
         } else {
           row.cell({
-            hAlign: colOptions?.hAlign ?? "center",
-            vAlign: colOptions?.vAlign ?? "center",
-            fontName: colOptions?.fontName,
-            fontSize: colOptions?.fontSize,
-            fontColor: colOptions?.fontColor,
-            cellColor: colOptions?.cellColor,
-            bold: colOptions?.bold,
-            italic: colOptions?.italic,
-            underline: colOptions?.underline,
-            marginTop: colOptions?.marginTop,
-            marginRight: colOptions?.marginRight,
-            marginBottom: colOptions?.marginBottom,
-            marginLeft: colOptions?.marginLeft,
+            hAlign: cell.hAlign ?? colOptions?.hAlign ?? "center",
+            vAlign: cell.vAlign ?? colOptions?.vAlign ?? "center",
+            fontName: cell.fontName ?? colOptions?.fontName,
+            fontSize: cell.fontSize ?? colOptions?.fontSize,
+            fontColor: cell.fontColor ?? colOptions?.fontColor,
+            cellColor: cell.cellColor ?? colOptions?.cellColor,
+            bold: cell.bold ?? colOptions?.bold,
+            italic: cell.italic ?? colOptions?.italic,
+            underline: cell.underline ?? colOptions?.underline,
+            marginTop: cell.marginTop ?? colOptions?.marginTop,
+            marginRight: cell.marginRight ?? colOptions?.marginRight,
+            marginBottom: cell.marginBottom ?? colOptions?.marginBottom,
+            marginLeft: cell.marginLeft ?? colOptions?.marginLeft,
             ...cell,
           });
         }
@@ -271,24 +626,43 @@ export class Table extends Element {
     await Promise.all(this.rows.map((row) => row.initCells(section)));
   }
 
+  /**
+   * Generates OOXML for this table.
+   *
+   * @throws {Error} Direct call not supported. Use via section.table() context.
+   * @returns {string}
+   */
   toXML(): string {
     throw new Error(
       "Table.toXML() requires a Section context—use section.table(...)",
     );
   }
 
+  /**
+   * Generates complete OOXML table element with section context.
+   *
+   * Produces a `<w:tbl>` element with table properties, grid definition,
+   * and rows. Supports both percentage and fixed-width columns.
+   *
+   * @param {Section} section - Parent section context
+   * @returns {string} WordprocessingML table element
+   */
   _toXMLWithSection(section: Section): string {
     const align = this.options.align ?? "center";
     let xml = "  <w:tbl>\n";
     xml += "    <w:tblPr>\n";
+
+    if (this.options.width) {
+      const widthSpec = parseTableCellWidth(this.options.width);
+      xml +=
+        `      <w:tblW w:w="${widthSpec.value}" w:type="${widthSpec.type}"/>\n`;
+    }
+
     if (this.options.indent) {
       const indentTwips = parseNumberTwips(this.options.indent);
       xml += `      <w:tblInd w:w="${indentTwips}" w:type="dxa"/>\n`;
     }
-    if (this.options.width) {
-      const width = parseNumberTwips(this.options.width);
-      xml += `      <w:tblW w:w="${width}" w:type="dxa"/>\n`;
-    }
+
     xml += `      <w:jc w:val="${align}"/>\n`;
     if (this.options.borders) {
       xml += `      <w:tblBorders>
@@ -304,8 +678,12 @@ export class Table extends Element {
     xml += "    </w:tblPr>\n";
     xml += "    <w:tblGrid>\n";
     for (const col of this.options.columns) {
-      const w = parseNumberTwips(col.width);
-      xml += `      <w:gridCol w:w="${w}"/>\n`;
+      const widthSpec = parseTableCellWidth(col.width);
+      if (widthSpec.type === "dxa") {
+        xml += `      <w:gridCol w:w="${widthSpec.value}"/>\n`;
+      } else {
+        xml += `      <w:gridCol w:w="1440"/>\n`;
+      }
     }
     xml += "    </w:tblGrid>\n";
     for (const row of this.rows) {
