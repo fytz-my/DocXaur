@@ -643,6 +643,23 @@ export class Table extends Element {
   }
 
   /**
+   * Applies conditional operations to the table.
+   *
+   * @deprecated Use direct `.row()` calls instead.
+   * @param {...Function[]} ops - Operations to apply
+   * @returns {this}
+   */
+  apply(...ops: ((builder: this) => this)[]): this {
+    console.warn(
+      "Table.apply() is deprecated. Use direct .row() calls instead.",
+    );
+    for (const op of ops) {
+      op(this);
+    }
+    return this;
+  }
+
+  /**
    * Builds all rows.
    *
    * Initializes cells, registers images, and prepares content for rendering.
