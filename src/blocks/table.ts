@@ -77,7 +77,124 @@ export function pageBreak(count: number = 1): PageBreak {
 }
 
 /**
- * Creates a shape marker for use in table cell runs.
+ * Creates a rectangle shape marker for use in table cell runs.
+ *
+ * @param {ShapeOptions} [options] - Shape configuration
+ * @returns {ShapeMarker} Shape marker
+ */
+export function rectangle(options?: ShapeOptions): ShapeMarker {
+  return new ShapeMarker(
+    { preset: "rect", name: "Rectangle" },
+    options,
+  );
+}
+
+/**
+ * Creates a rounded rectangle shape marker for use in table cell runs.
+ *
+ * @param {ShapeOptions} [options] - Shape configuration
+ * @returns {ShapeMarker} Shape marker
+ */
+export function roundedRectangle(options?: ShapeOptions): ShapeMarker {
+  return new ShapeMarker(
+    { preset: "roundRect", name: "Rounded Rectangle" },
+    options,
+  );
+}
+
+/**
+ * Creates a circle shape marker for use in table cell runs.
+ *
+ * @param {ShapeOptions} [options] - Shape configuration
+ * @returns {ShapeMarker} Shape marker
+ */
+export function circle(options?: ShapeOptions): ShapeMarker {
+  return new ShapeMarker(
+    { preset: "ellipse", name: "Circle" },
+    options,
+  );
+}
+
+/**
+ * Creates a diamond shape marker for use in table cell runs.
+ *
+ * @param {ShapeOptions} [options] - Shape configuration
+ * @returns {ShapeMarker} Shape marker
+ */
+export function diamond(options?: ShapeOptions): ShapeMarker {
+  return new ShapeMarker(
+    { preset: "diamond", name: "Diamond" },
+    options,
+  );
+}
+
+/**
+ * Creates a triangle shape marker for use in table cell runs.
+ *
+ * @param {ShapeOptions} [options] - Shape configuration
+ * @returns {ShapeMarker} Shape marker
+ */
+export function triangle(options?: ShapeOptions): ShapeMarker {
+  return new ShapeMarker(
+    { preset: "triangle", name: "Triangle" },
+    options,
+  );
+}
+
+/**
+ * Creates a pentagon shape marker for use in table cell runs.
+ *
+ * @param {ShapeOptions} [options] - Shape configuration
+ * @returns {ShapeMarker} Shape marker
+ */
+export function pentagon(options?: ShapeOptions): ShapeMarker {
+  return new ShapeMarker(
+    { preset: "pentagon", name: "Pentagon" },
+    options,
+  );
+}
+
+/**
+ * Creates a hexagon shape marker for use in table cell runs.
+ *
+ * @param {ShapeOptions} [options] - Shape configuration
+ * @returns {ShapeMarker} Shape marker
+ */
+export function hexagon(options?: ShapeOptions): ShapeMarker {
+  return new ShapeMarker(
+    { preset: "hexagon", name: "Hexagon" },
+    options,
+  );
+}
+
+/**
+ * Creates a five-point star shape marker for use in table cell runs.
+ *
+ * @param {ShapeOptions} [options] - Shape configuration
+ * @returns {ShapeMarker} Shape marker
+ */
+export function star5(options?: ShapeOptions): ShapeMarker {
+  return new ShapeMarker(
+    { preset: "star5", name: "Star (5-point)" },
+    options,
+  );
+}
+
+/**
+ * Creates a heart shape marker for use in table cell runs.
+ *
+ * @param {ShapeOptions} [options] - Shape configuration
+ * @returns {ShapeMarker} Shape marker
+ */
+export function heart(options?: ShapeOptions): ShapeMarker {
+  return new ShapeMarker(
+    { preset: "heart", name: "Heart" },
+    options,
+  );
+}
+
+/**
+ * Creates a generic shape marker by preset for use in table cell runs.
  *
  * @param {ShapeType} shapeType - Shape preset identifier
  * @param {ShapeOptions} [options] - Shape configuration
