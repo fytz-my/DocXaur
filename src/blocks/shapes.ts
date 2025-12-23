@@ -157,10 +157,12 @@ export interface ShapeLine {
  * @typedef {Object} ShapeSize
  * @property {string} [width] - Width dimension
  * @property {string} [height] - Height dimension
+ * @property {number} [rotate] - Shape rotation in degrees
  */
 export interface ShapeSize {
   width?: string;
   height?: string;
+  rotate?: number;
 }
 
 /**
@@ -174,7 +176,11 @@ export interface ShapeSize {
  * @property {number} [fontSize] - Font size in points
  * @property {string} [fontColor] - Text color hex
  * @property {string} [fontName] - Font family
- * @property {string} [align] - Text alignment
+ * @property {string} [hAlign] - Text alignment
+ * @property {string} [marginTop] - Internal Top Margin
+ * @property {string} [marginBottom] - Internal Bottom Margin
+ * @property {string} [marginLeft] - Internal Left Margin
+ * @property {string} [marginRight] - Internal Right Margin
  */
 export interface ShapeTextBox {
   text?: string;
@@ -184,7 +190,11 @@ export interface ShapeTextBox {
   fontSize?: number;
   fontColor?: string;
   fontName?: string;
-  align?: string;
+  hAlign?: string;
+  marginTop?: string;
+  marginBottom?: string;
+  marginLeft?: string;
+  marginRight?: string;
 }
 
 /**
@@ -307,14 +317,14 @@ function buildShapeLineXML(line?: ShapeLine): string {
 function buildTextBoxXML(textBox: ShapeTextBox): string {
   if (!textBox.text) return "";
 
-  const align = textBox.align || "left";
-  const jc = align === "justify" ? "both" : align;
+  const hAlign = textBox.hAlign || "left";
+  const jc = hAlign === "justify" ? "both" : hAlign;
 
   let xml = "              <wps:txbx>\n";
   xml += "                <w:txbxContent>\n";
   xml += "                  <w:p>\n";
   xml += "                    <w:pPr>\n";
-  if (align !== "left") {
+  if (hAlign !== "left") {
     xml += `                      <w:jc w:val="${jc}"/>\n`;
   }
   xml += "                    </w:pPr>\n";
@@ -351,8 +361,6 @@ function buildTextBoxXML(textBox: ShapeTextBox): string {
  * Supports both anchor-positioned and inline shapes.
  *
  * @param {ShapeType} shapeType - Shape preset
- * @param {number} [width] - Width in EMU
- * @param {number} [height] - Height in EMU
  * @param {ShapeOptions} [options] - Shape styling and positioning
  * @returns {string} OOXML shape element
  */
@@ -367,66 +375,100 @@ export function buildShapeXML(
     ? parseShapeDim(options.size.height)
     : cmToEmu(2);
 
+  const rot = options?.size?.rotate !== undefined
+    ? Math.round(options.size.rotate * 60000)
+    : undefined;
+
   const fillXML = buildShapeFillXML(options?.fill);
   const lineXML = buildShapeLineXML(options?.line);
   const textBoxXML = options?.textBox ? buildTextBoxXML(options.textBox) : "";
+
   const shapeId = shapeCounter++;
   const align = options?.align || "center";
   const position = options?.position || "anchor";
 
+  const lIns = options?.textBox?.marginLeft
+    ? parseShapeDim(options.textBox.marginLeft)
+    : undefined;
+  const rIns = options?.textBox?.marginRight
+    ? parseShapeDim(options.textBox.marginRight)
+    : undefined;
+  const tIns = options?.textBox?.marginTop
+    ? parseShapeDim(options.textBox.marginTop)
+    : undefined;
+  const bIns = options?.textBox?.marginBottom
+    ? parseShapeDim(options.textBox.marginBottom)
+    : undefined;
+
+  const bodyPrAttrs = [
+    'rot="0"',
+    'vert="horz"',
+    'anchor="ctr"',
+    'anchorCtr="0"',
+    'rtlCol="0"',
+    lIns !== undefined ? `lIns="${lIns}"` : null,
+    tIns !== undefined ? `tIns="${tIns}"` : null,
+    rIns !== undefined ? `rIns="${rIns}"` : null,
+    bIns !== undefined ? `bIns="${bIns}"` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const xfrmOpen = rot !== undefined ? `<a:xfrm rot="${rot}">` : `<a:xfrm>`;
+
   if (position === "inline") {
     return `    <w:r>
-      <w:drawing>
-        <wp:inline distT="0" distB="0" distL="0" distR="0">
-          <wp:extent cx="${width}" cy="${height}"/>
-          <wp:effectExtent l="0" t="0" r="0" b="0"/>
-          <wp:docPr id="${shapeId}" name="Shape ${shapeId}"/>
-          <wp:cNvGraphicFramePr/>
-          <a:graphic>
-            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
-              <wps:wsp>
-                <wps:cNvSpPr/>
-                <wps:spPr>
-                  <a:xfrm><a:off x="0" y="0"/><a:ext cx="${width}" cy="${height}"/></a:xfrm>
-                  <a:prstGeom prst="${shapeType.preset}"><a:avLst/></a:prstGeom>
-    ${fillXML}${lineXML}            </wps:spPr>
-    ${textBoxXML}            <wps:bodyPr rot="0" vert="horz" anchor="ctr" anchorCtr="0" rtlCol="0"/>
-              </wps:wsp>
-            </a:graphicData>
-          </a:graphic>
-        </wp:inline>
-      </w:drawing>
-    </w:r>
-    `;
+       <w:drawing>
+         <wp:inline distT="0" distB="0" distL="0" distR="0">
+           <wp:extent cx="${width}" cy="${height}"/>
+           <wp:effectExtent l="0" t="0" r="0" b="0"/>
+           <wp:docPr id="${shapeId}" name="Shape ${shapeId}"/>
+           <wp:cNvGraphicFramePr/>
+           <a:graphic>
+             <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+               <wps:wsp>
+                 <wps:cNvSpPr txBox="1"/>
+                 <wps:spPr>
+                   ${xfrmOpen}<a:off x="0" y="0"/><a:ext cx="${width}" cy="${height}"/></a:xfrm>
+                   <a:prstGeom prst="${shapeType.preset}"><a:avLst/></a:prstGeom>
+ ${fillXML}${lineXML}                </wps:spPr>
+ ${textBoxXML}                <wps:bodyPr ${bodyPrAttrs}/>
+               </wps:wsp>
+             </a:graphicData>
+           </a:graphic>
+         </wp:inline>
+       </w:drawing>
+     </w:r>
+     `;
   }
 
   return `    <w:r>
-    <w:drawing>
-      <wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="251658240" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">
-        <wp:simplePos x="0" y="0"/>
-        <wp:positionH relativeFrom="column"><wp:align>${align}</wp:align></wp:positionH>
-        <wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>
-        <wp:extent cx="${width}" cy="${height}"/>
-        <wp:effectExtent l="0" t="0" r="0" b="0"/>
-        <wp:wrapNone/>
-        <wp:docPr id="${shapeId}" name="Shape ${shapeId}"/>
-        <wp:cNvGraphicFramePr/>
-        <a:graphic>
-          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
-            <wps:wsp>
-              <wps:cNvSpPr/>
-              <wps:spPr>
-                <a:xfrm><a:off x="0" y="0"/><a:ext cx="${width}" cy="${height}"/></a:xfrm>
-                <a:prstGeom prst="${shapeType.preset}"><a:avLst/></a:prstGeom>
-  ${fillXML}${lineXML}            </wps:spPr>
-  ${textBoxXML}            <wps:bodyPr rot="0" vert="horz" anchor="ctr" anchorCtr="0" rtlCol="0"/>
-            </wps:wsp>
-          </a:graphicData>
-        </a:graphic>
-      </wp:anchor>
-    </w:drawing>
-  </w:r>
-  `;
+     <w:drawing>
+       <wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="251658240" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">
+         <wp:simplePos x="0" y="0"/>
+         <wp:positionH relativeFrom="column"><wp:align>${align}</wp:align></wp:positionH>
+         <wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>
+         <wp:extent cx="${width}" cy="${height}"/>
+         <wp:effectExtent l="0" t="0" r="0" b="0"/>
+         <wp:wrapNone/>
+         <wp:docPr id="${shapeId}" name="Shape ${shapeId}"/>
+         <wp:cNvGraphicFramePr/>
+         <a:graphic>
+           <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+             <wps:wsp>
+               <wps:cNvSpPr txBox="1"/>
+               <wps:spPr>
+                 ${xfrmOpen}<a:off x="0" y="0"/><a:ext cx="${width}" cy="${height}"/></a:xfrm>
+                 <a:prstGeom prst="${shapeType.preset}"><a:avLst/></a:prstGeom>
+ ${fillXML}${lineXML}              </wps:spPr>
+ ${textBoxXML}              <wps:bodyPr ${bodyPrAttrs}/>
+             </wps:wsp>
+           </a:graphicData>
+         </a:graphic>
+       </wp:anchor>
+     </w:drawing>
+   </w:r>
+   `;
 }
 
 /**
